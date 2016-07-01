@@ -1,0 +1,9 @@
+#+title: analysis ipk package
+
+* for windows
+1. rename a.ipk as a.ipk.rar
+2. decompress with winrar (>5.0)
+
+* for linux
+1. tar zxvf a.ipk
+2. tar xf data.tar.gz
