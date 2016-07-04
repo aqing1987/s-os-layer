@@ -1,0 +1,70 @@
+#+title: ubuntu14.04 compile bluez5.40
+
+* download
+http://www.bluez.org/download/
+
+* compile & install flow
+# configure
+$ ./configure --prefix=/usr --mandir=/usr/share/man --sysconfdir=/etc --localstatedir=/var
+
+# compile
+$ make
+
+# install
+$ sudo make install
+
+* error process
+** configure: error: D-Bus >= 1.6 is required
+$ sudo apt-get install build-essential libdbus-1-dev check
+
+** configure: error: libudev >= 172 is required
+$ sudo apt-get install libudev-dev
+
+** configure: error: libical is required
+$ sudo apt-get install libical-dev
+
+** configure: error: readline header files are required
+$ sudo apt-get install libreadline-dev
+
+** configure: error: systemd system unit directory is required
+$ ./configure --prefix=/usr --mandir=/usr/share/man --sysconfdir=/etc --localstatedir=/var \
+   --with-systemdsystemunitdir=/lib/systemd/system --with-systemduserunitdir=/usr/lib/systemd
+
+or 
+
+$ ./configure --prefix=/usr --mandir=/usr/share/man --sysconfdir=/etc --localstatedir=/var --disable-systemd
+* what installed
+$ sudo make install
+
+libtool: install: /usr/bin/install -c client/bluetoothctl /usr/bin/bluetoothctl
+libtool: install: /usr/bin/install -c monitor/btmon /usr/bin/btmon
+libtool: install: /usr/bin/install -c tools/hciattach /usr/bin/hciattach
+libtool: install: /usr/bin/install -c tools/hciconfig /usr/bin/hciconfig
+libtool: install: /usr/bin/install -c tools/hcitool /usr/bin/hcitool
+libtool: install: /usr/bin/install -c tools/hcidump /usr/bin/hcidump
+libtool: install: /usr/bin/install -c tools/rfcomm /usr/bin/rfcomm
+libtool: install: /usr/bin/install -c tools/rctest /usr/bin/rctest
+libtool: install: /usr/bin/install -c tools/l2test /usr/bin/l2test
+libtool: install: /usr/bin/install -c tools/l2ping /usr/bin/l2ping
+libtool: install: /usr/bin/install -c tools/sdptool /usr/bin/sdptool
+libtool: install: /usr/bin/install -c tools/ciptool /usr/bin/ciptool
+libtool: install: /usr/bin/install -c tools/bccmd /usr/bin/bccmd
+libtool: install: /usr/bin/install -c tools/bluemoon /usr/bin/bluemoon
+libtool: install: /usr/bin/install -c tools/hex2hcd /usr/bin/hex2hcd
+libtool: install: /usr/bin/install -c tools/mpris-proxy /usr/bin/mpris-proxy
+libtool: install: /usr/bin/install -c tools/btattach /usr/bin/btattach
+libtool: install: /usr/bin/install -c src/bluetoothd /usr/libexec/bluetooth/bluetoothd
+libtool: install: /usr/bin/install -c obexd/src/obexd /usr/libexec/bluetooth/obexd
+libtool: install: /usr/bin/install -c profiles/cups/bluetooth /usr/lib/cups/backend/bluetooth
+
+ /usr/bin/install -c -m 644 src/bluetooth.conf '/etc/dbus-1/system.d'
+ /usr/bin/install -c -m 644 obexd/src/org.bluez.obex.service '/usr/share/dbus-1/services'
+ /usr/bin/install -c -m 644 src/org.bluez.service '/usr/share/dbus-1/system-services'
+
+ /usr/bin/install -c -m 644 tools/hciattach.1 tools/hciconfig.1 tools/hcitool.1 tools/hcidump.1 tools/rfcomm.1 tools/rctest.1 tools/l2ping.1 tools/sdptool.1 tools/ciptool.1 tools/bccmd.1 tools/hid2hci.1 tools/btattach.1 '/usr/share/man/man1'
+
+ /usr/bin/install -c -m 644 src/bluetoothd.8 '/usr/share/man/man8'
+ /usr/bin/install -c -m 644 tools/97-hid2hci.rules '/lib/udev/rules.d'
+ /usr/bin/install -c -m 644 src/bluetooth.service '/lib/systemd/system'
+ /usr/bin/install -c -m 644 obexd/src/obex.service '/usr/lib/systemd'
+libtool: install: /usr/bin/install -c tools/hid2hci /lib/udev/hid2hci
