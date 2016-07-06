@@ -1,0 +1,43 @@
+#+title: boot script sysfixtime analysis
+#+options: ^:nil
+
+* sysfixtime content
+#+BEGIN_SRC sh
+# cat /etc/rc.d/S00sysfixtime
+
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2013-2014 OpenWrt.org
+
+ASTART=00
+
+boot() {
+    local curtime="$(date +%s)"
+    local maxtime="$(find /etc -type f -exec date -r {} +%s \; | sort -nr | head -n1)"
+    [ $curtime -lt $maxtime ] && date -s @$maxtime
+}
+#+END_SRC
+
+* mechanism
+1. get current time 
+
+   # %s   seconds since 1970-01-01 00:00:00 UTC
+   date +%s
+
+2. display the last modification time of FILE in /etc
+
+   find /etc -type f -exec date -r {} +%s \;
+
+3. sort from large to small
+
+   # -n, compare according to string numerical value
+   # -r, reverse the result of comparisons
+   sort -nr
+
+4. get the latest time
+
+   head -n1
+
+5. if current time < /etc file's latest time, set the latest time
+
+   [ $curtime -lt $maxtime ] && date -s @$maxtime
+   
