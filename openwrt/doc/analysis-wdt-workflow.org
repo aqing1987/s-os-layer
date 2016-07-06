@@ -1,0 +1,204 @@
+#+title: Analysis WDT workflow
+#+options: ^:nil
+
+* locate wdt driver
+cd build_dir/target-mips_34kc_uClibc-0.9.33.2/linux-ar71xx_generic/linux-3.10.49
+ls drivers/watchdog
+
+there are lots of watchdog driver!
+
+1. check the Makefile
+
+#+BEGIN_SRC make
+# MIPS Architecture
+obj-$(CONFIG_ATH79_WDT) += ath79_wdt.o
+obj-$(CONFIG_BCM47XX_WDT) += bcm47xx_wdt.o
+obj-$(CONFIG_BCM63XX_WDT) += bcm63xx_wdt.o
+obj-$(CONFIG_RC32434_WDT) += rc32434_wdt.o
+obj-$(CONFIG_INDYDOG) += indydog.o
+obj-$(CONFIG_JZ4740_WDT) += jz4740_wdt.o
+obj-$(CONFIG_WDT_MTX1) += mtx-1_wdt.o
+obj-$(CONFIG_GPIO_WDT) += gpio_wdt.o
+obj-$(CONFIG_PNX833X_WDT) += pnx833x_wdt.o
+obj-$(CONFIG_SIBYTE_WDOG) += sb_wdog.o
+obj-$(CONFIG_AR7_WDT) += ar7_wdt.o
+obj-$(CONFIG_TXX9_WDT) += txx9wdt.o
+obj-$(CONFIG_OCTEON_WDT) += octeon-wdt.o
+octeon-wdt-y := octeon-wdt-main.o octeon-wdt-nmi.o
+obj-$(CONFIG_LANTIQ_WDT) += lantiq_wdt.o
+#+END_SRC
+
+2. check the Kconfig
+
+#+BEGIN_SRC kconfig
+# MIPS Architecture
+
+config ATH79_WDT
+    tristate "Atheros AR71XX/AR724X/AR913X hardware watchdog"
+    depends on ATH79
+    help
+      Hardware driver for the built-in watchdog timer on the Atheros
+      AR71XX/AR724X/AR913X SoCs.
+#+END_SRC
+
+3. we use AR71xx, so ath79_wdt.c maybe the driver.
+
+4. add debug message to confirm, ath79_wdt.c is the right driver to analysis.
+
+* procd feeds wdt flow
+[[../pics/analysis-wdt-workflow.jpeg]]
+
+* feeds wdt code flow
+
+#+BEGIN_SRC c
+// build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/procd.c
+int main(int argc, char **argv)
+{
+	uloop_init();
+	procd_state_next();
+	uloop_run();
+}
+
+// build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/state.c
+enum {
+	STATE_NONE = 0,
+	STATE_EARLY,
+	STATE_INIT,
+};
+
+static int state = STATE_NONE;
+
+void procd_state_next(void)
+{
+	state++;
+	state_enter();
+}
+
+static void state_enter(void)
+{
+	switch (state) {
+	case STATE_EARLY:
+		LOG("- early -\n");
+		watchdog_init(0);
+		break;
+
+	case STATE_INIT:
+		// try to reopen incase the wdt was not available before coldplug
+		watchdog_init(0);
+		LOG("- ubus -\n");
+		break;
+	};
+}
+
+// build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/watchdog.c
+void watchdog_init(int preinit)
+{
+	wdt_timeout.cb = watchdog_timeout_cb;
+	wdt_fd = open("/dev/watchdog", O_WRONLY);
+
+	if (!preinit)
+		fcntl(wdt_fd, F_SETFD, fcntl(wdt_fd, F_GETFD) | FD_CLOEXEC);
+
+	LOG("- watchdog -\n");
+	watchdog_timeout(30);
+	watchdog_timeout_cb(&wdt_timeout);
+
+	DEBUG(4, "Opened watchdog with timeout %ds\n", watchdog_timeout(0));
+}
+
+int watchdog_timeout(int timeout)
+{
+	DEBUG(4, "Set watchdog timeout: %ds\n", timeout);
+	ioctl(wdt_fd, WDIOC_SETTIMEOUT, &timeout);
+	ioctl(wdt_fd, WDIOC_GETTIMEOUT, &timeout);
+
+	return timeout;
+}
+
+// build_dir/target-mips_34kc_uClibc-0.9.33.2/linux-ar71xx_generic/linux-3.10.49/
+// drivers/watchdog/ath79_wdt.c
+static long ath79_wdt_ioctl(struct file *file, unsigned int cmd,
+			    unsigned long arg)
+{
+	switch (cmd) {
+	case WDIOC_SETTIMEOUT:
+		err = get_user(t, p);
+		err = ath79_wdt_set_timeout(t);
+		/* fallthrough */
+	case WDIOC_GETTIMEOUT:
+		err = put_user(timeout, p);
+		break;
+	}
+
+	return err;
+}
+
+static int ath79_wdt_set_timeout(int val)
+{
+	if (val > max_timeout)
+		timeout = max_timeout;
+	else
+		timeout = val;
+
+	ath79_wdt_keepalive();
+
+	return 0;
+}
+
+#define WDOG_REG_TIMER		0x04
+
+static inline void ath79_wdt_keepalive(void)
+{
+    // max_timeout = (0xfffffffful / wdt_freq); = 171 seconds
+    // wdt_freq * timeout = 750000000 = 2CB41780
+    // timeout = 30, wdt_freq = 25000000
+    // root@AP:~# devmem 0x1806000c
+	ath79_wdt_wr(WDOG_REG_TIMER, wdt_freq * timeout);
+	/* flush write */
+	ath79_wdt_rr(WDOG_REG_TIMER);
+}
+
+
+// feed the wdt per 5 seconds
+static int wdt_frequency = 5;
+static void watchdog_timeout_cb(struct uloop_timeout *t)
+{
+	write(wdt_fd, "X", 1);
+    // add 5 seconds timer
+	uloop_timeout_set(t, wdt_frequency * 1000);
+}
+
+// build_dir/target-mips_34kc_uClibc-0.9.33.2/linux-ar71xx_generic/linux-3.10.49/
+// drivers/watchdog/ath79_wdt.c
+static ssize_t ath79_wdt_write(struct file *file, const char *data,
+				size_t len, loff_t *ppos)
+{
+	if (len) {
+		ath79_wdt_keepalive();
+	}
+
+	return len;
+}
+
+// build_dir/target-mips_34kc_uClibc-0.9.33.2/libubox-2014-08-04/uloop.c
+int uloop_timeout_set(struct uloop_timeout *timeout, int msecs)
+{
+	struct timeval *time = &timeout->time;
+
+	if (timeout->pending)
+		uloop_timeout_cancel(timeout);
+
+	uloop_gettime(&timeout->time);
+
+	time->tv_sec += msecs / 1000;
+	time->tv_usec += (msecs % 1000) * 1000;
+
+	if (time->tv_usec > 1000000) {
+		time->tv_sec++;
+		time->tv_usec %= 1000000;
+	}
+
+	return uloop_timeout_add(timeout);
+}
+
+#+END_SRC
