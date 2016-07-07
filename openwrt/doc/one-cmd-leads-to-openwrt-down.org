@@ -1,0 +1,14 @@
+#+title: one command leads to openwrt downs
+
+as we know, openwrt uses busybox for many commands.
+
+e.g. chmod, chown
+
+Once we do the following operation, openwrt will not work.
+
+#+BEGIN_SRC sh
+# chmod -x /bin/busybox
+#+END_SRC
+
+The solution:
+use independent command 'jffs2reset' to restore.
