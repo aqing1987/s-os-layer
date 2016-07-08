@@ -1,0 +1,75 @@
+#+title: quilt for openwrt
+#+options: ^:nil
+
+* install quilt
+#+BEGIN_SRC sh
+audo apt-get install quilt
+#+END_SRC
+
+* generate package patch flow
+
+we use busybox as an example
+
+1. do clean compile first
+#+BEGIN_SRC sh
+make package/busybox/{clean,prepare,compile} V=s
+#+END_SRC
+
+2. add QUILT=1
+#+BEGIN_SRC sh
+make package/busybox/{clean,prepare} V=s QUILT=1
+#+END_SRC
+
+3. enter the package directory
+#+BEGIN_SRC sh
+cd build_dir/target-mips_34kc_uClibc-0.9.33.2/busybox-1.22.1
+#+END_SRC
+
+4. check all patches (not mandatory)
+#+BEGIN_SRC sh
+quilt series
+#+END_SRC
+
+5. apply all patches
+#+BEGIN_SRC sh
+quilt push -a
+#+END_SRC
+
+6. create new patch
+quilt new generic/xxx.patch
+
+7. bind files to the new patch
+
+while (not finished) {
+    quilt add file
+} 
+
+8. check files recorded by xxx.patch
+#+BEGIN_SRC sh
+quilt files
+#+END_SRC
+
+9. do modification to added files of xxx.patch
+
+10. compare the modified files
+#+BEGIN_SRC sh
+quilt diff
+#+END_SRC
+
+11. save modification
+#+BEGIN_SRC sh
+quilt refresh
+#+END_SRC
+
+12. save the generate patch file
+generated patch located in:
+#+BEGIN_SRC sh
+build_dir/target-mips_34kc_uClibc-0.9.33.2/busybox-1.22.1/patches/generic/273-add-reboot-log.patch
+#+END_SRC
+
+move it to:
+#+BEGIN_SRC sh
+package/utils/busybox/patches
+#+END_SRC
+
+13. done
