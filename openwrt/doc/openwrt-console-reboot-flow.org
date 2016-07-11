@@ -1,0 +1,162 @@
+#+title: openwrt console reboot flow
+#+options: ^:nil
+
+once type 'reboot' in the console, what's the inner logic?
+
+* busybox stage
+** reboot is a link symbol
+#+BEGIN_SRC sh
+ls -l /sbin/reboot                                                   
+lrwxrwxrwx    1 root     root            14 Jul  8 15:39 /sbin/reboot -> ../bin/busybox
+#+END_SRC
+
+** reboot logic in busybox
+
+reboot command will invoke halt_main in init/halt.c, then send TERM signal to 
+number 1 process which is procd.
+
+
+#+BEGIN_SRC c
+int halt_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
+int halt_main(int argc UNUSED_PARAM, char **argv)
+{
+
+	/* Perform action. */
+	rc = 1;
+	if (!(flags & 4)) { /* no -f */
+		if (rc) {
+			/* talk to init */
+			if (!ENABLE_FEATURE_CALL_TELINIT) {
+				/* bbox init assumed */
+                /* if reboot, signals[which] = SIGTERM */
+                rc = kill(1, signals[which]);
+			} else {
+                ...
+			}
+		}
+	} else {
+		rc = reboot(magic[which]);
+	}
+
+	if (rc)
+		bb_perror_nomsg_and_die();
+	return rc;
+}
+#+END_SRC
+
+* procd stage
+procd signal handler
+build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/procd.c
+
+#+BEGIN_SRC c
+int main(int argc, char **argv)
+{
+    ...
+    procd_signal();
+    ...
+}
+
+#+END_SRC
+
+build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/signal.c
+#+BEGIN_SRC c
+static void signal_shutdown(int signal, siginfo_t *siginfo, void *data)
+{
+	switch(signal) {
+	case SIGTERM:
+		event = RB_AUTOBOOT;
+		msg = "reboot";
+		break;
+	case SIGUSR1:
+	case SIGUSR2:
+		event = RB_POWER_OFF;
+		msg = "poweroff";
+		break;
+	}
+
+	DEBUG(1, "Triggering %s\n", msg);
+	if (event)
+		procd_shutdown(event);
+}
+
+void procd_signal(void)
+{
+    ...
+	sigaction(SIGTERM, &sa_shutdown, NULL);
+	sigaction(SIGUSR1, &sa_shutdown, NULL);
+	sigaction(SIGUSR2, &sa_shutdown, NULL);
+    ...
+}
+
+#+END_SRC
+
+from code above, we know, once procd received SIGTERM signal, 
+`procd_shutdown(RB_AUTOBOOT)' will execute.
+
+build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/state.c
+
+#+BEGIN_SRC c
+void procd_shutdown(int event)
+{
+	DEBUG(2, "Shutting down system with event %x\n", event);
+	reboot_event = event;
+	state = STATE_SHUTDOWN;
+	state_enter();
+}
+
+static void state_enter(void)
+{
+    ...
+	switch (state) {
+	case STATE_SHUTDOWN:
+		LOG("- shutdown -\n");
+		procd_inittab_run("shutdown");
+		sync();
+		break;
+
+	case STATE_HALT:
+		LOG("- reboot -\n");
+		reboot(reboot_event);
+		break;
+	};
+    ...
+}
+
+#+END_SRC
+
+procd_inittab_run("shutdown"); 
+will execute all K* scripts in /etc/rc.d
+
+after all K* scripts in /etc/rc.d finished, `procd_state_next()' will be invoked
+in 
+#+BEGIN_SRC c
+static void rcdone(struct runqueue *q)
+{
+	procd_state_next();
+}
+#+END_SRC
+
+which leads to enter STATE_HALT in `state_enter'.
+
+and finally `reboot(reboot_event)' will be invoked.
+
+From the header 
+
+staging_dir/toolchain-mips_34kc_gcc-4.8-linaro_uClibc-0.9.33.2/include/sys/reboot.h
+
+#+BEGIN_SRC c
+/* Perform a hard reset now.  */
+#define RB_AUTOBOOT 0x01234567
+
+
+__BEGIN_DECLS
+
+/* Reboot or halt the system.  */
+extern int reboot (int __howto) __THROW;
+
+__END_DECLS
+#+END_SRC
+
+we know, reboot job finished in kernel.
+* kernel stage
+to be continued
