@@ -1,0 +1,125 @@
+#+title: openwrt boot script 'done' analysis
+#+options: ^:nil
+
+* S95done
+#+BEGIN_SRC sh
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2006 OpenWrt.org
+
+START=95
+boot() {
+        # in normal boot, /tmp/root not exist
+        [ -d /tmp/root ] && mount_root done
+
+        # current now rc.local is empty
+        # process user commands
+        [ -f /etc/rc.local ] && {
+                sh /etc/rc.local
+        }
+
+        # if led exist, enable it and set brightness
+        # set leds to normal state
+        . /etc/diag.sh
+        set_state done
+}
+
+#+END_SRC
+
+* exec flow
+** supported command
+/etc/init.d/done boot
+
+** [ -d /tmp/root ] && mount_root done
+if /tmp/root existed, execute `mount_root done'
+
+1. /tmp/root will not exist during normal boot
+2. mount_root done, if find `rootfs_data' and `deadcode' will switch from 
+   tmpfs to jffs2
+
+./build_dir/target-mips_34kc_uClibc-0.9.33.2/fstools-2014-06-22/mount_root.c
+#+BEGIN_SRC c
+static int done(int argc, char *argv[1])
+{
+	struct volume *v = volume_find("rootfs_data");
+
+	if (!v)
+		return -1;
+
+	switch (volume_identify(v)) {
+	case FS_NONE:
+	case FS_DEADCODE:
+		return jffs2_switch(argc, argv);
+	}
+
+	return 0;
+}
+
+#+END_SRC
+** [ -f /etc/rc.local ] && { sh /etc/rc.local }
+
+/etc/rc.local exist, so /etc/rc.local will execute.
+but the /etc/rc.local do nothing.
+
+/package/base-files/files/etc/rc.local
+#+BEGIN_SRC sh
+# Put your custom commands here that should be executed once
+# the system init finished. By default this file does nothing.
+
+exit 0
+#+END_SRC
+
+** set_state done
+build_dir/target-mips_34kc_uClibc-0.9.33.2/root-ar71xx/etc/diag.sh
+
+
+#+BEGIN_SRC sh
+#!/bin/sh
+# Copyright (C) 2009-2013 OpenWrt.org
+
+. /lib/functions/leds.sh
+. /lib/ar71xx.sh
+
+get_status_led() {
+	case $(ar71xx_board_name) in
+	wlr8100)
+		status_led="sitecom:amber:status"
+		;;
+	esac
+}
+
+set_state() {
+	get_status_led
+
+	case "$1" in
+	preinit)
+		status_led_blink_preinit
+		;;
+	failsafe)
+		status_led_blink_failsafe
+		;;
+	done)
+		status_led_on
+		;;
+	esac
+}
+
+#+END_SRC
+
+*** status_led_on
+build_dir/target-mips_34kc_uClibc-0.9.33.2/root-ar71xx/lib/functions/leds.sh
+
+#+BEGIN_SRC sh
+led_set_attr() {
+    [ -f "/sys/class/leds/$1/$2" ] && echo "$3" > "/sys/class/leds/$1/$2"
+}
+
+led_on() {
+    led_set_attr $1 "trigger" "none"
+    led_set_attr $1 "brightness" 255
+}
+
+status_led_on() {
+    led_on $status_led
+    [ -n "$status_led2" ] && led_on $status_led2
+}
+#+END_SRC
