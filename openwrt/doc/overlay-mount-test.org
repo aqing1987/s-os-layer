@@ -1,0 +1,8 @@
+#+title: overlay mount test
+
+* mount as overlayfs
+#+BEGIN_SRC sh
+root@AP:~# mkdir -p /tmp/cc
+root@AP:~# mount /dev/mtdblock4 -t overlayfs -o noatime,lowerdir=/,upperdir=/tmp/cc /tmp/cc
+root@AP:~# mount overlayfs:/overlay -t overlayfs -o noatime,lowerdir=/,upperdir=/tmp/kk /tmp/kk
+#+END_SRC
