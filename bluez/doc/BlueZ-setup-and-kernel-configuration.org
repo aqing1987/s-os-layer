@@ -1,0 +1,63 @@
+#+title: Bluez setup and kernel configuration
+
+* the modular structure of BlueZ
+
+user      | BlueZ utilities |     | Bluetooth Applications |
+space     -------------------     --------------------------
+               |           |         |             |
+----------------------------------------------------------------
+kernel    | HCI sockets| | L2CAP protocol |    | SCO sockets |
+space     -------------- ------------------    ---------------
+                |               |                  |
+                |      protocol | interface        |
+             ---------------------------------------------
+             |              BlueZ Core                   |
+             ---------------------------------------------
+                |       driver  |     interface    |
+                |               |                  |
+            ------------------------------------------------------
+             VHCI driver | UART driver | USB driver | other driver
+            ------------------------------------------------------
+                        Host  | Controller  | Interfaces   | (HCI)
+                          -----------------------------------
+                             Bluetooth Hardware 
+                          -----------------------------------
+
+* kernel configuration
+Use the following kernel configuration to enable Bluetooth over USB:
+
+** For USB system
+#+BEGIN_SRC config
+ CONFIG_USB_HID 
+ CONFIG_USB_SUPPORT 
+ CONFIG_USB_ARCH_HAS_HCD 
+ CONFIG_USB_ARCH_HAS_OHCI 
+ CONFIG_USB_ARCH_HAS_EHCI 
+ CONFIG_USB 
+ CONFIG_USB_DEBUG  (for debugging purposes) 
+ CONFIG_USB_DEVICE_CLASS 
+ CONFIG_USB_EHCI_HCD 
+ CONFIG_USB_OHCI_HCD 
+ CONFIG_USB_OHCI_LITTLE_ENDIAN 
+ CONFIG_USB_SERIAL (for STLC2500 device) 
+ CONFIG_USB_SERIAL_PL2303 (for STLC2500 device)
+#+END_SRC
+
+** For Bluetooth system
+#+BEGIN_SRC config
+ CONFIG_BT 
+ CONFIG_BT_L2CAP 
+ CONFIG_BT_SCO 
+ CONFIG_BT_RFCOMM 
+ CONFIG_BT_RFCOMM_TTY 
+ CONFIG_BT_BNEP 
+ CONFIG_BT_BNEP_MC_FILTER 
+ CONFIG_BT_BNEP_PROTO_FILTER 
+ CONFIG_BT_HIDP 
+ CONFIG_BT_HCIUSB 
+ CONFIG_BT_HCIUSB_SCO 
+ CONFIG_BT_HCIUART 
+ CONFIG_BT_HCIUART_H4
+ CONFIG_BT_HCIUART_BCSP 
+ CONFIG_BT_HCIVHCI
+#+END_SRC
