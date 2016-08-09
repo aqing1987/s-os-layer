@@ -1,0 +1,583 @@
+#+title: openwrt14.07 upgrade flow
+#+options: ^:nil
+
+* code flow
+** sysupgrade xxx.bin
+/sbin/sysupgrade
+
+#+BEGIN_SRC sh
+. /lib/functions.sh
+. /lib/functions/system.sh
+
+export CONFFILES=/tmp/sysupgrade.conffiles
+export CONF_TAR=/tmp/sysupgrade.tgz
+
+add_uci_conffiles() {
+	local file="$1"
+	( find $(sed -ne '/^[[:space:]]*$/d; /^#/d; p' \
+		/etc/sysupgrade.conf /lib/upgrade/keep.d/* 2>/dev/null) \
+		-type f 2>/dev/null;
+	  opkg list-changed-conffiles ) | sort -u > "$file"
+	return 0
+}
+
+sysupgrade_image_check="platform_check_image"
+sysupgrade_init_conffiles="add_uci_conffiles"
+
+include /lib/upgrade
+
+# run one time
+for check in $sysupgrade_image_check; do
+	( eval "$check \"\$ARGV\"" ) || {
+		echo "Image check '$check' failed."
+		exit 1
+	}
+done
+
+do_save_conffiles() {
+	local conf_tar="${1:-$CONF_TAR}"
+
+	[ -z "$(rootfs_type)" ] && {
+		echo "Cannot save config while running from ramdisk."
+		ask_bool 0 "Abort" && exit
+		return 0
+	}
+	#run_hooks "$CONFFILES" $sysupgrade_init_conffiles
+    $sysupgrade_init_coffiles "$CONFFILES"
+
+    # ask_bool 1, can check the files for saving
+	ask_bool 0 "Edit config file list" && vi "$CONFFILES"
+
+	v "Saving config files... to /tmp/sysupgrade.tgz"
+	tar czf "$conf_tar" -T "$CONFFILES" 2>/dev/null
+
+	rm -f "$CONFFILES"
+}
+
+do_save_conffiles
+
+ubus call system upgrade
+touch /tmp/sysupgrade
+
+# kill now
+kill_remaining TERM
+sleep 3
+kill_remaining KILL
+
+if [ -n "$(rootfs_type)" ]; then
+	v "Switching to ramdisk..."
+	run_ramfs '. /lib/functions.sh; include /lib/upgrade; do_upgrade'
+else
+	do_upgrade
+fi
+
+
+#+END_SRC
+
+** run_hooks
+/lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+run_hooks() {
+	local arg="$1"; shift
+	for func in "$@"; do
+		eval "$func $arg"
+	done
+}
+
+#+END_SRC
+
+** platform_check_image
+/lib/upgrade/platform.sh
+
+#+BEGIN_SRC sh
+platform_check_image() {
+	local board=$(ar71xx_board_name)
+	local magic_long="$(get_magic_long "$1")"
+
+	case "$board" in
+	afi-a1)
+		[ "$magic_long" != "27051956" ] && {
+			echo "Invalid afi-a1 image type."
+			return 1
+		}
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+#+END_SRC
+
+** get_magic_long
+lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+get_magic_long() {                    
+(get_image "$@" | dd bs=4 count=1 | hexdump -v -n 4 -e '1/1 "%02x"') 2>/dev/null
+}
+#+END_SRC
+
+** get_image
+lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+get_image() { # <source> [ <command> ]
+	local from="$1"
+	local conc="$2"
+	local cmd="cat";
+
+	local magic="$(eval $cmd $from 2>/dev/null | dd bs=2 count=1 2>/dev/null | hexdump -n 2 -e '1/1 "%02x"')"
+    #magic = 2705
+	case "$magic" in
+		1f8b) conc="zcat";;
+		425a) conc="bzcat";;
+	esac
+
+    # cmd = cat, from = /tmp/dump_upgrade.bin conc = 
+	eval "$cmd $from 2>/dev/null ${conc:+| $conc}"
+}
+
+#+END_SRC
+** ubus call system upgrade
+build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/system.c
+#+BEGIN_SRC c
+static const struct ubus_method system_methods[] = {
+	UBUS_METHOD_NOARG("upgrade", system_upgrade),
+};
+
+static int system_upgrade(struct ubus_context *ctx, struct ubus_object *obj,
+			struct ubus_request_data *req, const char *method,
+			struct blob_attr *msg)
+{
+	upgrade_running = 1;
+	return 0;
+}
+
+#+END_SRC
+
+build_dir/target-mips_34kc_uClibc-0.9.33.2/procd-2014-09-15/service/instance.c
+#+BEGIN_SRC c
+static void
+instance_exit(struct uloop_process *p, int ret)
+{
+	struct service_instance *in;
+	struct timespec tp;
+	long runtime;
+
+    // if upgrade_running, don't respawn
+	if (upgrade_running)
+		return;
+
+	uloop_timeout_cancel(&in->timeout);
+	if (in->halt) {
+		/* no action */
+	} else if (in->restart) {
+		instance_start(in);
+	} else if (in->respawn) {
+		if (runtime < in->respawn_threshold)
+			in->respawn_count++;
+		else
+			in->respawn_count = 0;
+		if (in->respawn_count > in->respawn_retry && in->respawn_retry > 0 ) {
+								in->srv->name, in->name, in->respawn_count, runtime);
+			in->restart = in->respawn = 0;
+			in->halt = 1;
+		} else {
+			uloop_timeout_set(&in->timeout, in->respawn_timeout * 1000);
+		}
+	}
+	service_event("instance.stop", in->srv->name, in->name);
+}
+
+#+END_SRC
+** kill_remaining
+/lib/upgrade/common.sh
+#+BEGIN_SRC sh
+kill_remaining() { # [ <signal> ]
+	local sig="${1:-TERM}"
+	echo -n "Sending $sig to remaining processes ... "
+
+	local my_pid=$$
+	local my_ppid=$(cut -d' ' -f4  /proc/$my_pid/stat)
+	local my_ppisupgraded=
+	grep -q upgraded /proc/$my_ppid/cmdline >/dev/null && {
+		local my_ppisupgraded=1
+	}
+
+	local stat
+    # check all process's stat
+	for stat in /proc/[0-9]*/stat; do
+		[ -f "$stat" ] || continue
+
+		local pid name state ppid rest
+		read pid name state ppid rest < $stat
+		name="${name#(}"; name="${name%)}"
+
+		local cmdline
+		read cmdline < /proc/$pid/cmdline
+
+		# Skip kernel threads, kernel threads will stay
+		[ -n "$cmdline" ] || continue
+
+		if [ $$ -eq 1 ] || [ $my_ppid -eq 1 ] && [ -n "$my_ppisupgraded" ]; then
+			# Running as init process, kill everything except me
+			if [ $pid -ne $$ ] && [ $pid -ne $my_ppid ]; then
+				echo -n "$name "
+				kill -$sig $pid 2>/dev/null
+			fi
+		else
+			case "$name" in
+				# Skip essential services
+				*procd*|*ash*|*init*|*watchdog*|*ssh*|*dropbear*|*telnet*|*login*|*hostapd*|*wpa_supplicant*|*nas*|*upgrade*|*httpd*|*php*) : ;;
+
+				# Killable process
+				*)
+					if [ $pid -ne $$ ] && [ $ppid -ne $$ ]; then
+						echo -n "$name "
+						kill -$sig $pid 2>/dev/null
+					fi
+				;;
+			esac
+		fi
+	done
+	echo ""
+}
+
+#+END_SRC
+** run_ramfs '. /lib/functions.sh; include /lib/upgrade; do_upgrade'
+/lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+# prepare fs files and bins to /tmp/root
+# and switch to ramfs
+run_ramfs() { # <command> [...]
+	install_bin /bin/busybox /bin/ash /bin/sh /bin/mount /bin/umount	\
+		/sbin/pivot_root /usr/bin/wget /sbin/reboot /bin/sync /bin/dd	\
+		/bin/grep /bin/cp /bin/mv /bin/tar /usr/bin/md5sum "/usr/bin/["	\
+		/bin/dd /bin/vi /bin/ls /bin/cat /usr/bin/awk /usr/bin/hexdump	\
+		/bin/sleep /bin/zcat /usr/bin/bzcat /usr/bin/printf /usr/bin/wc \
+		/bin/cut /usr/bin/printf /bin/sync /bin/mkdir /bin/rmdir	\
+		/bin/rm /usr/bin/basename /bin/kill /bin/chmod
+
+	install_bin /sbin/mtd
+	install_bin /sbin/ubi
+	install_bin /sbin/mount_root
+	install_bin /sbin/snapshot
+	install_bin /sbin/snapshot_tool
+	install_bin /usr/sbin/ubiupdatevol
+	install_bin /usr/sbin/ubiattach
+	install_bin /usr/sbin/ubiblock
+	install_bin /usr/sbin/ubiformat
+	install_bin /usr/sbin/ubidetach
+	install_bin /usr/sbin/ubirsvol
+	install_bin /usr/sbin/ubirmvol
+	install_bin /usr/sbin/ubimkvol
+	install_bin /usr/bin/partool
+	install_bin /sbin/uci
+	install_bin /sbin/ifconfig
+	install_bin /sbin/route
+	for file in $RAMFS_COPY_BIN; do
+		install_bin ${file//:/ }
+	done
+	install_file /etc/resolv.conf /lib/*.sh /lib/functions/*.sh /lib/upgrade/*.sh $RAMFS_COPY_DATA
+
+	[ -L "/lib64" ] && ln -s /lib $RAM_ROOT/lib64
+
+	supivot $RAM_ROOT /mnt || {
+		echo "Failed to switch over to ramfs. Please reboot."
+		exit 1
+	}
+
+	/bin/mount -o remount,ro /mnt
+	/bin/umount -l /mnt
+
+	grep /overlay /proc/mounts > /dev/null && {
+		/bin/mount -o noatime,remount,ro /overlay
+		/bin/umount -l /overlay
+	}
+
+	# spawn a new shell from ramdisk to reduce the probability of cache issues
+	exec /bin/busybox ash -c . /lib/functions.sh; include /lib/upgrade; do_upgrade
+}
+
+#+END_SRC
+** install_bin, install_files
+lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+RAM_ROOT=/tmp/root
+
+# copy rootfs files to /tmp/root
+install_file() { # <file> [ <file> ... ]
+	for file in "$@"; do
+		dest="$RAM_ROOT/$file"
+		[ -f $file -a ! -f $dest ] && {
+			dir="$(dirname $dest)"
+			mkdir -p "$dir"
+			cp $file $dest
+		}
+	done
+}
+
+# create symbolic bins to /tmp/root
+# or copy non-symbolic bins to /tmp/root
+install_bin() { # <file> [ <symlink> ... ]
+	src=$1
+	files=$1
+	[ -x "$src" ] && files="$src $(libs $src)"
+	install_file $files
+	[ -e /lib/ld.so.1 ] && {
+		install_file /lib/ld.so.1
+	}
+	shift
+	for link in "$@"; do {
+		dest="$RAM_ROOT/$link"
+		dir="$(dirname $dest)"
+		mkdir -p "$dir"
+		[ -f "$dest" ] || ln -s $src $dest
+	}; done
+}
+
+#+END_SRC
+** do_upgrade
+lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+do_upgrade() {
+	v "Performing system upgrade..."
+	if type 'platform_do_upgrade' >/dev/null 2>/dev/null; then
+		platform_do_upgrade "$ARGV"
+	else
+		default_do_upgrade "$ARGV"
+	fi
+
+	if [ "$SAVE_CONFIG" -eq 1 ] && type 'platform_copy_config' >/dev/null 2>/dev/null; then
+		platform_copy_config
+	fi
+
+	v "Upgrade completed"
+	[ -n "$DELAY" ] && sleep "$DELAY"
+	ask_bool 1 "Reboot" && {
+		v "Rebooting system..."
+        $LOGHEAD "=reboot= reboot after upgrade completed"
+		reboot -f
+		sleep 5
+		echo b 2>/dev/null >/proc/sysrq-trigger
+	}
+}
+
+#+END_SRC
+
+** platform_do_upgrade
+lib/upgrade/platform.sh
+#+BEGIN_SRC sh
+platform_do_upgrade() {
+	local board=$(ar71xx_board_name)
+
+    # board = afi-a1
+	case "$board" in
+	*)
+        # ARGV = /tmp/dump_upgrade.bin
+		default_do_upgrade "$ARGV"
+		;;
+	esac
+}
+
+#+END_SRC
+** default_do_upgrade
+lib/upgrade/common.sh
+
+#+BEGIN_SRC sh
+default_do_upgrade() {
+	sync
+    # $1 = /tmp/dump_upgrade.bin, PART_NAME = firmware
+    # output /tmp/dump_upgrade.bin content to mtd
+	get_image "$1" | mtd -j /tmp/sysupgrade.tgz write - "${PART_NAME:-image}"
+}
+
+#+END_SRC
+
+** /sbin/mtd
+
+package/system/mtd/src/mtd.c
+
+#+BEGIN_SRC c
+mtd -j /tmp/sysupgrade.tgz write - firmware
+
+int main (int argc, char **argv)
+{
+	int ch, i, boot, imagefd = 0, force, unlocked;
+	char *erase[MAX_ARGS], *device = NULL;
+	char *fis_layout = NULL;
+	size_t offset = 0, part_offset = 0;
+
+	erase[0] = NULL;
+	boot = 0;
+	force = 0;
+	buflen = 0;
+	quiet = 0;
+	no_erase = 0;
+
+	while ((ch = getopt(argc, argv, "frnqe:d:s:j:p:o:")) != -1) {
+		switch (ch) {
+			case 'j':
+                // jffs2file = /tmp/sysupgrade.tgz
+				jffs2file = optarg;
+				break;
+		}
+    }
+	argc -= optind;
+	argv += optind;
+
+	if ((strcmp(argv[0], "write") == 0) && (argc == 3)) {
+		cmd = CMD_WRITE;
+		device = argv[2];
+
+		if (strcmp(argv[1], "-") == 0) {
+			imagefile = "<stdin>";
+			imagefd = 0;
+		}
+
+        // device = "firmware"
+		if (!mtd_check(device)) {
+			fprintf(stderr, "Can't open device for writing!\n");
+			exit(1);
+		}
+		/* check trx file before erasing or writing anything */
+		if (!image_check(imagefd, device) && !force) {
+			fprintf(stderr, "Image check failed.\n");
+			exit(1);
+		}
+	}
+
+	i = 0;
+	unlocked = 0;
+	while (erase[i] != NULL) {
+		mtd_unlock(erase[i]);
+		mtd_erase(erase[i]);
+		if (strcmp(erase[i], device) == 0)
+			unlocked = 1;
+		i++;
+	}
+
+	switch (cmd) {
+		case CMD_WRITE:
+			if (!unlocked)
+				mtd_unlock(device);
+			mtd_write(imagefd, device, fis_layout, part_offset);
+			break;
+	}
+
+}
+
+#+END_SRC
+
+** mtd_check
+package/system/mtd/src/mtd.c
+
+#+BEGIN_SRC c
+// mtd_check("firmware")
+static int mtd_check(const char *mtd)
+{
+	fd = mtd_check_open(mtd);
+	if (!buf)
+		buf = malloc(erasesize);
+
+	close(fd);
+}
+
+#+END_SRC
+
+** mtd_check_open
+package/system/mtd/src/mtd.c
+
+#+BEGIN_SRC c
+// mtd_check_open("firmware")
+// invoke mtd driver
+int mtd_check_open(const char *mtd)
+{
+	struct mtd_info_user mtdInfo;
+	int fd;
+
+	fd = mtd_open(mtd, false);
+	if(fd < 0) {
+		fprintf(stderr, "Could not open mtd device: %s\n", mtd);
+		return -1;
+	}
+
+	if(ioctl(fd, MEMGETINFO, &mtdInfo)) {
+		fprintf(stderr, "Could not get MTD device info from %s\n", mtd);
+		close(fd);
+		return -1;
+	}
+	mtdsize = mtdInfo.size;
+	erasesize = mtdInfo.erasesize;
+	mtdtype = mtdInfo.type;
+
+	return fd;
+}
+
+#+END_SRC
+** mtd_open
+package/system/mtd/src/mtd.c
+
+#+BEGIN_SRC c
+// mtd_open("firmware", false);
+int mtd_open(const char *mtd, bool block)
+{
+	FILE *fp;
+	char dev[PATH_MAX];
+	int i;
+	int ret;
+	int flags = O_RDWR | O_SYNC;
+	char name[PATH_MAX];
+
+	snprintf(name, sizeof(name), "\"%s\"", mtd);
+    // find "fimware"" partition, and open it.
+	if ((fp = fopen("/proc/mtd", "r"))) {
+		while (fgets(dev, sizeof(dev), fp)) {
+			if (sscanf(dev, "mtd%d:", &i) && strstr(dev, name)) {
+                // dev = mtd7: 00f90000 00010000 "firmware"
+				snprintf(dev, sizeof(dev), "/dev/mtd%s/%d", (block ? "block" : ""), i);
+                // if no /dev/mtd/7 exist, try /dev/mtd7
+				if ((ret=open(dev, flags))<0) {
+					snprintf(dev, sizeof(dev), "/dev/mtd%s%d", (block ? "block" : ""), i);
+                    // dev = /dev/mtd7, open /dev/mtd7 and return
+					ret=open(dev, flags);
+				}
+				fclose(fp);
+				return ret;
+			}
+		}
+		fclose(fp);
+	}
+
+	return open(mtd, flags);
+}
+
+#+END_SRC
+** ioctl(fd, MEMGETINFO, &mtdInfo)
+linux-3.10.49/drivers/mtd/mtdchar.c
+
+#+BEGIN_SRC c
+static const struct file_operations mtd_fops = {
+	.owner		= THIS_MODULE,
+	.llseek		= mtdchar_lseek,
+	.read		= mtdchar_read,
+	.write		= mtdchar_write,
+	.unlocked_ioctl	= mtdchar_unlocked_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl	= mtdchar_compat_ioctl,
+#endif
+	.open		= mtdchar_open,
+	.release	= mtdchar_close,
+	.mmap		= mtdchar_mmap,
+#ifndef CONFIG_MMU
+	.get_unmapped_area = mtdchar_get_unmapped_area,
+#endif
+};
+
+
+#+END_SRC
