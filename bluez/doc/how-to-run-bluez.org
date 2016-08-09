@@ -1,0 +1,112 @@
+#+title: how to run bluez
+
+* hciattach
+plug in a Bluetooth USB device. If the device is based on the STLC2500,
+enter the following command to attach the STLC2500 Bluetooth device to
+USB using HCI:
+
+#+BEGIN_SRC sh
+target# hciattach /dev/ttyUSB0 stlc2500 115200
+#+END_SRC
+
+The hciattach tool also loads the firmware required to set up STLC2500-based
+Bluetooth devices.
+
+* hciconfig
+Use hciconfig to bring up the associated USB device manually:
+#+BEGIN_SRC sh
+target# hciconfig hci0 up
+#+END_SRC
+
+The hciconfig command enables the device to handle other Bluetooth devices
+through its embedded discovery system.
+
+* hcitool
+Use hcitool to configure Bluetooth connections and send special commands to
+Bluetooth devices. For example, to discover the Bluetooth-enabled devices 
+within range, use the scan command:
+
+#+BEGIN_SRC sh
+target# hcitool scan
+#+END_SRC
+
+If the Bluetooth system has been configured correctly, hciconfig displays
+something similar to the following: 
+#+BEGIN_SRC sh
+target# hcitool scan
+Scanning…
+00:16:CF:DC:B9:81 Nokia3660
+00:15:4B:01:33:C5 BTGPS-321
+#+END_SRC
+
+The number "00:16:CF:DC:B9:81" is the MAC address of the associated Bluetooth
+device (a mobile Nokia in this instance). The software always uses the MAC
+address to reference a given device. 
+
+➜  doc git:(master) ✗ hcitool 
+hcitool - HCI Tool ver 5.40
+Usage:
+	hcitool [options] <command> [command parameters]
+Options:
+	--help	Display help
+	-i dev	HCI device
+Commands:
+	dev 	Display local devices
+	inq 	Inquire remote devices
+	scan	Scan for remote devices
+	name	Get name from remote device
+	info	Get information from remote device
+	spinq	Start periodic inquiry
+	epinq	Exit periodic inquiry
+	cmd 	Submit arbitrary HCI commands
+	con 	Display active connections
+	cc  	Create connection to remote device
+	dc  	Disconnect from remote device
+	sr  	Switch master/slave role
+	cpt 	Change connection packet type
+	rssi	Display connection RSSI
+	lq  	Display link quality
+	tpl 	Display transmit power level
+	afh 	Display AFH channel map
+	lp  	Set/display link policy settings
+	lst 	Set/display link supervision timeout
+	auth	Request authentication
+	enc 	Set connection encryption
+	key 	Change connection link key
+	clkoff	Read clock offset
+	clock	Read local or remote clock
+	lescan	Start LE scan
+	leinfo	Get LE remote information
+	lewladd	Add device to LE White List
+	lewlrm	Remove device from LE White List
+	lewlsz	Read size of LE White List
+	lewlclr	Clear LE White List
+	lerladd	Add device to LE Resolving List
+	lerlrm	Remove device from LE Resolving List
+	lerlclr	Clear LE Resolving List
+	lerlsz	Read size of LE Resolving List
+	lerlon	Enable LE Address Resolution
+	lerloff	Disable LE Address Resolution
+	lecc	Create a LE Connection
+	ledc	Disconnect a LE Connection
+	lecup	LE Connection Update
+
+* l2ping
+When a device has been discovered, use l2ping to test the connection. For
+example, to ping the Nokia device described above, use the following command:
+#+BEGIN_SRC sh
+target# l2ping 00:16:CF:DC:B9:81
+#+END_SRC
+
+* sdptool
+Another useful Bluetooth tool is sdptool, which provides the interface for
+performing SDP queries on Bluetooth devices, and administering a local sdpd
+daemon. sdptool provides a list of the features of the Bluetooth device to be
+handled. This includes ports, protocol, communication channels, and so forth.
+Use the browse option to get a general overview of the features of the Bluetooth
+device referenced by the given MAC address:
+
+#+BEGIN_SRC sh
+target# sdptool browse 00:16:CF:DC:B9:81
+#+END_SRC
+
