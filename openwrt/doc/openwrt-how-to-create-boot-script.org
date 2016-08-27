@@ -1,0 +1,281 @@
+#+title: openwrt init script analysis
+#+options: ^:nil
+
+* refs
++ https://wiki.openwrt.org/doc/techref/initscripts
++ https://wiki.openwrt.org/inbox/procd-init-scripts
++ https://wiki.openwrt.org/doc/techref/process.boot
+
+* sequence number limitation
++ S00xx ~ S99xx
++ K00xx ~ K99xx
+
+the sequence number is limited in [00 ~ 99]
+
+** reason:
+check /etc/rc.common
+
+#+BEGIN_SRC sh
+disable() {
+	name="$(basename "${initscript}")"
+	rm -f "$IPKG_INSTROOT"/etc/rc.d/S??$name
+	rm -f "$IPKG_INSTROOT"/etc/rc.d/K??$name
+}
+#+END_SRC
+
+if sequence number larger than 99, then 
+
+#+BEGIN_SRC sh
+/etc/init.d/xxx diable
+/etc/init.d/xxx enable
+#+END_SRC
+
+cann't be used anymore.
+
+e.g. 
+
+/etc/rc.d/S110rogueap is invalid.
+
+* /etc/rc.common wrapper
+uses /etc/rc.common as a wrapper to provide its main and default functionality 
+and to check the script prior to execution.
+
+#+BEGIN_SRC sh
+
+# 1 阶段
+# 传统配置中默认接口
+start() {
+}
+
+stop() {
+}
+
+reload() {
+}
+
+restart() {
+}
+
+boot() {
+}
+
+shutdown() {
+}
+
+disable() {
+}
+
+enable() {
+}
+
+enabled() {
+}
+
+depends() {
+}
+
+help() {
+}
+
+# 2 阶段
+# 这4个api 供procd 的 start, stop, reload, running接口使用，同时
+# 这4个api 可以供我们的脚本文件定义，若在脚本中定义则覆盖其默认定义
+start_service() {
+	return 0
+}
+
+stop_service() {
+	return 0
+}
+
+service_triggers() {
+	return 0
+}
+
+service_running() {
+	return 0
+}
+
+# 3 阶段
+# 刷新当前配置文件中的接口，如果有和以上同名的接口则覆盖前者
+. "$initscript"
+
+# 4 阶段
+# 如果使用procd类型，则以为procd定义的同名接口覆盖前者
+[ -n "$USE_PROCD" ] && {
+
+	start() {
+	}
+
+	stop() {
+	}
+
+	reload() {
+	}
+
+	running() {
+	}
+}
+
+# 命令执行阶段
+ALL_COMMANDS="start stop reload restart boot shutdown enable disable enabled depends ${EXTRA_COMMANDS}"
+list_contains ALL_COMMANDS "$action" || action=help
+[ "$action" = "reload" ] && action='eval reload "$@" || restart "$@" && :'
+$action "$@"
+
+#+END_SRC
+
+1. rc.common 提供了默认的一些接口比如 start, stop, reload, restart
+2. /etc/init.d 下定义的脚本函数接口不可以为空
+3. rc.common 当前支持的命令接口由ALL_COMMANDS指定
+
+   start stop reload restart boot shutdown enable disable enabled depends
+
+4. *原理： 后一阶段定义的同名接口将覆盖前一阶段所定义的接口*
+
+* traditional SysV style init scripts
+
+假设当前待操作脚本为 /etc/init.d/xxx (当前arp-proxy为SysV style)
+
+1. start 
+
+   如果xxx 未提供该接口，调用默认start 直接返回0
+
+2. stop
+
+   如果xxx 未提供该接口，调用默认stop 直接返回0
+
+3. reload
+
+   [ "$action" = "reload" ] && action='eval reload "$@" || restart "$@" && :'
+
+   如果xxx 未提供该接口，调用默认reload, 默认reload返回1表示失败，继续
+   调用restart
+
+4. restart
+
+   如果xxx 未提供该接口，调用默认restart, 默认restart 先调用stop 再调用start
+
+5. boot
+
+   如果xxx 未提供该接口，调用默认boot，默认boot 调用start
+
+6. shutdown
+
+   如果xxx 未提供该接口，调用默认shutdown，默认shutdown 调用stop
+
+7. disable
+
+   如果xxx 未提供该接口，调用默认disable。
+
+   默认disable 将删除xxx 所对应的在/etc/rc.d/下的 S??xxx  符号链接
+
+8. enable
+
+   如果xxx 未提供该接口，调用默认enable。
+
+   默认enable 将在/etc/rc.d目录下为 xxx 创建名为 S??xxx的符号链接
+
+9. enabled
+
+   如果xxx 未提供该接口，调用默认enabled。
+
+   默认enabled 判断在/etc/rc.d目录下是否存在具备可执行权限的指向xxx的符号链接
+
+10. depends
+
+	如果xxx 未提供该接口，调用默认depends, 默认depends 返回0
+	
+11. help
+
+	action=${2:-help}
+	
+	当传入的参数不为rc.common所支持的接口，或不输入参数时，会调用help
+
+	如果xxx 未提供接口，则调用默认help，默认help 打印语法信息
+
+* procd style init script
+
+*该类型的脚本可以将特定的程序由procd进行监管，若程序被kill掉，procd可以将其重新启动，前提是所写的程序不是守护类型程序*
+
+其中 USE_PROCD=1 是procd 类型的配置文件的标志。
+
+
+若使用procd类型的脚本，则脚本中所定义的start, stop, reload, running接口
+将被rc.common 中 procd 区中的接口所覆盖
+
+假设当前待操作脚本为 /etc/init.d/yyy (当前tid为procd style)
+
+
+1. start
+
+   即使yyy中定义了start接口，也不会处理。
+
+   procd_open_service yyy /etc/init.d/yyy
+   start_service
+   procd_close_service
+
+   将yyy 及 /etc/init.d/yyy 封闭成json 格式传递给procd, 调用脚本自定义的
+   start_service 接口，如果不存在调用默认接口，默认接口返回0
+
+   接着调用 service_triggers接口，如果该接口在yyy中没有定义，则使用默认接口，
+   默认接口返回0
+
+2. stop
+
+   即使yyy中定义了该接口，也不会处理。
+
+   stop_service
+   procd_kill yyy
+
+   先调用stop_service,如果脚本中未定义，调用脚本默认stop_service，默认接口返回0。
+
+   调用stop_service后，procd 将进程yyy 杀死
+
+3. reload
+
+   即使yyy中定义了该接口，也不会处理。
+
+   调用系统默认start接口，见1
+
+4. restart
+
+   如果yyy 中定义了该接口，则执行yyy中restart，否则调用默认restart，
+
+   默认restart先执行 (2. stop)再执行 (1. start)
+
+5. boot
+
+   如果yyy 中定义了该接口，则执行yyy中boot，否则调用默认boot，
+
+   默认boot 执行1. start
+
+6. shutdown
+
+   如果yyy 中定义了该接口，则执行yyy中shutdown，否则调用默认shutdown，
+
+   默认shutdown 执行2. stop
+
+7. enable
+
+   同SysV 类型接口
+
+8. disable
+
+   同SysV 类型接口
+
+9. enabled
+
+   同SysV 类型接口
+
+10. depends
+
+	同SysV 类型接口
+
+11. running
+
+	EXTRA_COMMANDS="${EXTRA_COMMANDS} running"
+	
+	如果yyy 中定义了service_running接口，则执行yyy中的service_running，
+
+    否则调用默认service_running，默认service_running 返回0
