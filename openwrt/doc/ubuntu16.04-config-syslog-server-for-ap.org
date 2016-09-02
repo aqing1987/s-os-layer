@@ -1,0 +1,55 @@
+#+title: ubuntu16.04 config syslog server
+#+options: ^:nile
+
+* refs
+https://linux.cn/article-5023-1.html
+
+* rsyslog info
++ rsyslog can work as server collecting other devices' syslog
++ rsyslog can work as client transferring self log to server
+
+* modify rsyslog config
+#+BEGIN_SRC sh
+sudo vi /etc/rsyslog.conf
+#+END_SRC
+
+enable udp and tcp monitor:
+#+BEGIN_SRC conf
+# provides UDP syslog reception
+module(load="imudp")
+input(type="imudp" port="514")
+
+# provides TCP syslog reception
+module(load="imtcp")
+input(type="imtcp" port="514")
+#+END_SRC
+
+also put the code model below before `GLOBAL DIRECTIVES'
+#+BEGIN_SRC sh
+$template IpTemplate,"/var/log/%FROMHOST-IP%.log"
+*.*  ?IpTemplate
+& ~
+#+END_SRC
+
+If log received from 192.168.1.104, then log file will be:
+#+BEGIN_SRC sh
+/var/log/192.168.1.104.log
+#+END_SRC
+
+* restart rsyslog
+#+BEGIN_SRC sh
+sudo service rsyslog restart
+#+END_SRC
+
+* ap client config
+#+BEGIN_SRC cfg
+config system
+	option log_port '514'
+	option log_priority 'LOG_NOTICE'
+	option log_remote '1'
+	option log_ip '192.168.1.107'
+#+END_SRC
+
+#+BEGIN_SRC sh
+/etc/init.d/log restart
+#+END_SRC
