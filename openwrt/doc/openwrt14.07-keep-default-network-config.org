@@ -1,0 +1,42 @@
+#+title: openwrt14.07 enable default network config
+
+* package network to rootfs
+in `package/base-files/Makefile'
+
+#+BEGIN_SRC make
+define Package/base-files/install
+    if [ -d $(TOPDIR)/package/hos/base-files/base-files-$(PROFILE)/. ]; then	\
+		if [ -d $(TOPDIR)/package/hos/base-files/base-files-$(PROFILE)/base-files-$(AT_PRODUCT)/. ]; then \
+			$(CP) $(TOPDIR)/package/hos/base-files/base-files-$(PROFILE)/base-files-$(AT_PRODUCT)/* $(1)/;\
+		fi;	\
+	fi
+
+$(call Package/base-files/install-target,$(1))
+ifneq ($(DUMP),1)
+  -include $(PLATFORM_DIR)/base-files.mk
+endif
+
+#+END_SRC
+
+* keep network
+in code below
+#+BEGIN_SRC make
+$(call Package/base-files/install-target,$(1))
+#+END_SRC
+
+which defined in 
+#+BEGIN_SRC sh
+target/linux/ar71xx/base-files.mk
+#+END_SRC
+as 
+#+BEGIN_SRC make
+define Package/base-files/install-target
+	rm -f $(1)/etc/config/network
+endef
+
+#+END_SRC
+it will delete the network in $(1)/etc/config
+
+For keeping the default network config by comment the `rm' line.
+
+
