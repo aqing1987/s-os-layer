@@ -1,0 +1,7 @@
+#+title: why `uci commit' is important and necessary
+
+* reason
+If there is no `uci commit' operation after uci write operation, then 
+the default serarch dir is pending.
+
+Only after the `uci commit' done, can we do other uci commands successful.
