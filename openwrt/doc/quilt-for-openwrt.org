@@ -73,3 +73,11 @@ package/utils/busybox/patches
 #+END_SRC
 
 13. done
+* generate kernel patch
+** prepare the kernel tree
+#+BEGIN_SRC sh
+make target/linux/{clean,prepare} V=s QUILT=1
+#+END_SRC
+
+** generate patch
+reference `generate package patch flow'
