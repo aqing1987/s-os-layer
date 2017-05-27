@@ -1,0 +1,64 @@
+#+title: add `ps -l' support for openwrt15.05
+#+options: ^:nil
+
+* description
+As default, when we run `ps', we can only see the following sections:
+#+BEGIN_SRC sh
+root@a:~# ps
+PID USER       VSZ STAT COMMAND
+    1 root      1416 S    /sbin/procd
+    2 root         0 SW   [kthreadd]
+    3 root         0 SW   [ksoftirqd/0]
+#+END_SRC
+
+It's far from enough.
+
+* add ps -l
+** set by `make menuconfig'
+do
+#+BEGIN_SRC sh
+make menuconfig
+#+END_SRC
+
+then select `Enable long output option'
+#+BEGIN_SRC menuconfig
+  Base system  --->
+    busybox  --->
+      Process Utilities  --->
+        [*] ps
+        [*]   Enable long output option (-l)
+#+END_SRC
+
+when -l enabled, save the configuration.
+we can find `CONFIG_BUSYBOX_CONFIG_FEATURE_PS_LONG=y' in .config.
+
+** quick test
+For quick test, compile busybox is enough:
+
++ compile busybox
+#+BEGIN_SRC sh
+$ make package/busybox/compile V=s
+#+END_SRC
+
++ copy to board
+
+  Use ssh or tftp to replace the /bin/busybox in our board by using the new compiled one.
+
+  The compiled `busybox' loacated in:
+#+BEGIN_SRC sh
+build_dir/target-mips_34kc_uClibc-0.9.33.2/busybox-1.23.2/
+#+END_SRC
+
++ Grant the execute privilege.
+#+BEGIN_SRC sh
+root@a:~# chmod +x /bin/busybox
+#+END_SRC
+
++ Then test it on board:
+#+BEGIN_SRC sh
+root@a:~# ps
+S   UID   PID  PPID   VSZ   RSS TTY   STIME TIME     CMD
+S     0     1     0  1416   644 0:0   May26 00:00:07 /sbin/procd
+S     0     2     0     0     0 0:0   May26 00:00:00 [kthreadd]
+S     0     3     2     0     0 0:0   May26 00:11:13 [ksoftirqd/0]
+#+END_SRC
