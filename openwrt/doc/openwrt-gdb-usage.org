@@ -1,0 +1,98 @@
+#+title: Debug Openwrt Package
+#+options: ^:nil
+
+* prepare gdbserver
+** add gdb support in toolchain
+#+BEGIN_SRC menu
+$ make menuconfig
+
+[*] Advanced configuration options (for developers)  --->
+  [*]   Toolchain Options  --->
+    [*]   Build gdb
+
+#+END_SRC
+
+** add gdbserver support
+#+BEGIN_SRC menu
+$ make menuconfig
+
+Development  --->
+  <M> gdbserver
+#+END_SRC
+
+** compile and install gdbserver
+#+BEGIN_SRC sh
+make package/devel/gdb/{clean,prepare,compile,install} V=s
+#+END_SRC
+
+Then scp the package below to board /tmp directory.
+#+BEGIN_SRC sh
+bin/ipq806x/packages/base/gdbserver_7.8-2_ipq806x.ipk
+#+END_SRC
+
+install the gdbserver:
+#+BEGIN_SRC sh
+root@xx# opkg install /tmp/gdbserver_7.8-2_ipq806x.ipk
+#+END_SRC
+* prepare package with debug info
+In order to debug a program effectively, you need to generate
+debugging information when you compile it. This debugging information
+is stored in the object file; it describes the data type of each variable
+or function and the correspondence between source line numbers and addresses
+in the executable code.
+
+To request debugging information, sepecify the '-g' option when you run the
+compiler.
+
+** add debug flag in package/Makefile
+
+add `TARGET_CFLAGS += -g3' in package/Makefile
+#+BEGIN_SRC make
+TARGET_CFLAGS += -g3
+
+define Build/Compile
+	$(MAKE) -C $(PKG_BUILD_DIR)/ \
+	CC="$(TARGET_CC)" \
+	CFLAGS="$(TARGET_CFLAGS)"
+endef
+#+END_SRC
+
+** compile package
+#+BEGIN_SRC sh
+make package/hello/{clean,prepare,compile,install} V=s
+#+END_SRC
+
+then scp to the board.
+
+* start gdbserver on target
+the target ip is 192.168.1.20
+#+BEGIN_SRC sh
+# gdbserver :9000 /bin/hello
+#+END_SRC
+
+* start gdb on host
+There are two methods for debug in host:
+** method one
+#+BEGIN_SRC sh
+./scripts/remote-gdb 192.168.1.20:9000 ./build_dir/target-*/hello/hello
+#+END_SRC
+
+** method2 two
+#+BEGIN_SRC sh
+$ ./staging_dir/toolchain-arm_cortex-a7_gcc-5.2.0_uClibc-1.0.14_eabi/bin/arm-openwrt-linux-gdb
+(gdb) file <openwrtdir>/build_dir/<targetarch>/<path>/<executable>
+(gdb) target remote ip:9000
+#+END_SRC
+* quit openwrt gdbserver
+There are two methods to quit openwrt gdbserver
+** monitor exit
+Give command
+#+BEGIN_SRC sh
+(gdb) monitor exit
+#+END_SRC
+
+from your **host gdb** before terminating the client. If you have already
+terminated it, just attach with another one.
+
+**  kill process
+Login the target by using ssh, and kill the gdbserver process.
