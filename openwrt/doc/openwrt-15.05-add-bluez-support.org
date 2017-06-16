@@ -1,0 +1,83 @@
+#+title: Openwrt 15.05 add bluez support
+#+options: ^:nil
+
+* reference
+https://wiki.openwrt.org/doc/howto/usb.bluetooth
+
+* platform
+#+CAPTION: Bluetooth Module in my board
+[[./images/cpu-bt.png]]
+
+As shown above, bt module is connected to cpu via UART.
+* add bluez support
+** select necessary packages
+|----------------+------------------------------------------------|
+| package        | description                                    |
+|----------------+------------------------------------------------|
+| kmod-bluetooth | Kernel support for Bluetooth devices           |
+|----------------+------------------------------------------------|
+| bluez-libs     | Bluetooth library.                             |
+|----------------+------------------------------------------------|
+| bluez-utils    | Bluetooth utilities.                           |
+|----------------+------------------------------------------------|
+| dbus           | Simple interprocess messaging system (daemon), |
+|                | dependency of bluez-utils                      |
+|----------------+------------------------------------------------|
+
+
+before make, make sure the packages have been selected in *.config*
+
+#+BEGIN_SRC config
+CONFIG_PACKAGE_bluez-libs=y
+CONFIG_PACKAGE_bluez-utils=y
+CONFIG_PACKAGE_dbus=y
+CONFIG_PACKAGE_libdbus=y
+#+END_SRC
+
+** compile && upgrade
+After compile, do upgrade
+
+** manually test bluetooth in board
+
+After login to the board:
+
++ attach serial devices via UART HCI to BlueZ stack
+#+BEGIN_SRC sh
+hciattach -n /dev/ttyHS0 bcsp 115200 &
+#+END_SRC
+
++ print name and basic information about all the bluetooth devices
+#+BEGIN_SRC sh
+hciconfig
+
+hci0:   Type: BR/EDR  Bus: UART
+        BD Address: 00:02:5B:00:A5:A5  ACL MTU: 310:10  SCO MTU: 64:8
+        UP RUNNING PSCAN
+        RX bytes:3613 acl:0 sco:0 events:108 errors:0
+        TX bytes:4382 acl:0 sco:0 commands:113 errors:0
+#+END_SRC
+
++ activate a device
+#+BEGIN_SRC sh
+hciconfig hci0 up
+#+END_SRC
+
++ Display local devices
+#+BEGIN_SRC sh
+hcitool dev
+#+END_SRC
+
++ scan for remote devices
+#+BEGIN_SRC sh
+hcitool scan
+#+END_SRC
+** troubleshoot issues
+If bluetooth device doesn't initialize correctly and doesn't show up
+while running *hcitool dev* command, try reinitializing bluetooth stack:
+
+#+BEGIN_SRC sh
+hciconfig hci0 reset
+hciconfig
+hciconfig hci0 up
+/etc/init.d/bluetoothd restart
+#+END_SRC
