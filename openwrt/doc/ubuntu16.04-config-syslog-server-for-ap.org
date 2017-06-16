@@ -1,14 +1,13 @@
-#+title: ubuntu16.04 config syslog server
-#+options: ^:nile
-
-* refs
-https://linux.cn/article-5023-1.html
+#+title: ubuntu16.04 monitor openwrt syslog
+#+options: ^:nil
 
 * rsyslog info
 + rsyslog can work as server collecting other devices' syslog
 + rsyslog can work as client transferring self log to server
 
-* modify rsyslog config
+* server config
+We use ubuntu16.04 as the server.
+** modify rsyslog config
 #+BEGIN_SRC sh
 sudo vi /etc/rsyslog.conf
 #+END_SRC
@@ -36,12 +35,16 @@ If log received from 192.168.1.104, then log file will be:
 /var/log/192.168.1.104.log
 #+END_SRC
 
-* restart rsyslog
+** restart rsyslog
 #+BEGIN_SRC sh
 sudo service rsyslog restart
 #+END_SRC
 
-* ap client config
+* client config
+We use openwrt as the client now. Openwrt support logread and it's included
+in `package/system/ubox'.
+** modify openwrt config
+change /etc/config/system as below:
 #+BEGIN_SRC cfg
 config system
 	option log_port '514'
@@ -50,6 +53,15 @@ config system
 	option log_ip '192.168.1.107'
 #+END_SRC
 
+** restart openwrt logread
 #+BEGIN_SRC sh
 /etc/init.d/log restart
+#+END_SRC
+
+* test
+Make sure we can ping through the server and client.
+
+check the client log in server now:
+#+BEGIN_SRC sh
+$ tail -f /var/log/192.168.1.104.log
 #+END_SRC
