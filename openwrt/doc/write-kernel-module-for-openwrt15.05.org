@@ -1,0 +1,126 @@
+#+title: Write kernel module for openwrt15.05
+#+options: ^:nil
+
+* kernel module code structure
+#+BEGIN_SRC tree
+package/hello
+├── Makefile
+└── src
+    ├── hello.c
+    ├── Kconfig
+    └── Makefile
+#+END_SRC
+
+* source code
+** hello/Makefile
+#+BEGIN_SRC makefile
+#
+# Copyright (C) 2008 OpenWrt.org
+#
+# This is free software, licensed under the GNU General Public License v2.
+# See /LICENSE for more information.
+#
+
+include $(TOPDIR)/rules.mk
+include $(INCLUDE_DIR)/kernel.mk
+
+PKG_NAME:=hello
+PKG_RELEASE:=1
+
+include $(INCLUDE_DIR)/package.mk
+
+define KernelPackage/$(PKG_NAME)
+  SUBMENU:=Test Modules
+  TITLE:=hello driver
+  FILES:=$(PKG_BUILD_DIR)/*.$(LINUX_KMOD_SUFFIX)
+  KCONFIG:=
+endef
+
+define KernelPackage/$(PKG_NAME)/description
+  Kernel module hello
+endef
+
+EXTRA_KCONFIG:= \
+	CONFIG_HELLO=m
+
+EXTRA_CFLAGS:= \
+	$(patsubst CONFIG_%, -DCONFIG_%=1, $(patsubst %=m,%,$(filter %=m,$(EXTRA_KCONFIG)))) \
+	$(patsubst CONFIG_%, -DCONFIG_%=1, $(patsubst %=y,%,$(filter %=y,$(EXTRA_KCONFIG)))) \
+
+MAKE_OPTS:= \
+	ARCH="$(LINUX_KARCH)" \
+	CROSS_COMPILE="$(TARGET_CROSS)" \
+	SUBDIRS="$(PKG_BUILD_DIR)" \
+	EXTRA_CFLAGS="$(EXTRA_CFLAGS)" \
+	$(EXTRA_KCONFIG)
+
+define Build/Prepare
+	mkdir -p $(PKG_BUILD_DIR)
+	$(CP) ./src/* $(PKG_BUILD_DIR)/
+endef
+
+define Build/Compile
+	$(MAKE) -C "$(LINUX_DIR)" \
+	$(MAKE_OPTS) \
+	modules
+endef
+
+$(eval $(call KernelPackage,$(PKG_NAME)))
+#+END_SRC
+
+** hello/src/hello.c
+#+BEGIN_SRC c
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+static int __init hello_init(void)
+{
+  printk("%s\n", __func__);
+  return 0;
+}
+
+static void __exit hello_exit(void)
+{
+  printk("%s\n", __func__);
+}
+
+module_init(hello_init);
+module_exit(hello_exit);
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Kevin");
+#+END_SRC
+** hello/src/Kconfig
+#+BEGIN_SRC Kconfig
+config HELLO
+　　tristate "Just a example"
+　　help
+　　　This is a example, for debugging kernel model.
+　　　If unsure, say N.
+#+END_SRC
+** hello/src/Makefile
+#+BEGIN_SRC Makefile
+obj-$(CONFIG_HELLO) += hello.o
+#+END_SRC
+* module select and compile
+** module select
+#+BEGIN_SRC sh
+$ make menuconfig
+
+Kernel modules --->
+  Test Modules --->
+    <M> kmod-hello
+#+END_SRC
+
+** module compile
+#+BEGIN_SRC sh
+make package/hello/{clean,prepare,compile,install} V=s
+#+END_SRC
+
+the compiled module locates in:
+#+BEGIN_SRC sh
+build_dir/target-arm_cortex-a7_uClibc-1.0.14_eabi/linux-ipq806x/hello/
+#+END_SRC
+
+* download the kernel module
+[[./files/kernel-module-hello.tgz]]
