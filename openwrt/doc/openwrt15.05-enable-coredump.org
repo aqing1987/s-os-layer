@@ -1,0 +1,47 @@
+#+title: Openwrt15.05 enable coredump
+
+* reference
++ https://en.wikipedia.org/wiki/Core_dump
++ man 5 core
+
+* overview
+A core dump is a file of a computer's documented momory of when a program or
+computer crashed. The file consists of the recorded status of the working
+memory at an explict time, usually close to when the system crashed or when the
+program ended atypically.
+
+Aside from the entire system memory or just part of the program that aborted,
+a core dump file may include additional information such as:
++ The processor's state
++ The processor register's contents
++ Memory management information
++ The program's counter and stack pointer
++ Operating system and processor information and flags
+
+Core dump may also be known as memory dump, storage dump or dump.
+
+In short, coredump is used by gdb to assist in diagnosing and debugging error
+in our programs.
+
+* enable coredump
+** set coredump file size
+#+BEGIN_SRC sh
+ulimit -c unlimited
+#+END_SRC
+
+** set coredump filename format
+#+BEGIN_SRC sh
+echo "core.%e.%p" > /proc/sys/kernel/core_pattern
+#+END_SRC
+
+* sample
+#+BEGIN_SRC sh
+root@x:~# ./helloworld
+Segmentation fault (core dumped)
+
+root@x:~# ls
+core.helloworld.23683    helloworld
+
+# debug
+root@x:~# gdb helloworld core.helloworld.23683
+#+END_SRC
