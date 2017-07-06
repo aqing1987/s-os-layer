@@ -1,0 +1,91 @@
+#+title: Openwrt no debugging symbols found
+#+options: ^:nil
+
+* reference
++ https://stackoverflow.com/questions/5244509/no-debugging-symbols-found-when-using-gdb
+
+* description
+I have added *-g* to the package Makefile, but when I debug the program, I got
+the following issue:
+#+BEGIN_SRC sh
+(gdb) file /usr/bin/test
+Reading symbols from /usr/bin/test...(no debugging symbols found)...done.
+#+END_SRC
+
+* analysis
+** theory guide
+The most frequent cause of "no debugging symbols found" when *-g* is present is
+that there is some "stray" -s or -S argument somewhere on the link line.
+
+from *man ld*:
+#+BEGIN_SRC sh
+-s
+--strip-all
+    Omit all symbol information from the output file.
+
+-S
+--strip-debug
+    Omit debugger symbol information (but not all symbols) from the output file.
+#+END_SRC
+
+** build log
+Then I serach the build terminal, I found "strip":
+#+BEGIN_SRC sh
+export CROSS="arm-openwrt-linux-uclibcgnueabi-" NO_RENAME=1 ;
+NM="arm-openwrt-linux-uclibcgnueabi-nm"
+STRIP="/home/a/bb/staging_dir/host/bin/sstrip"
+STRIP_KMOD="/home/a/bb/scripts/strip-kmod.sh"
+PATCHELF="/home/a/bb/staging_dir/host/bin/patchelf"
+/home/a/bb/scripts/rstrip.sh
+/home/a/bb/build_dir/target-arm_cortex-a7_uClibc-1.0.14_eabi/test/ipkg-ipq806x/test
+rstrip.sh: /home/a/bb/build_dir/target-arm_cortex-a7_uClibc-1.0.14_eabi/test/ipkg-ipq806x/test/bin/test: executable
+#+END_SRC
+
+** openwrt rstrip
+the strip function defined in rules.mk
+#+BEGIN_SRC mk
+# strip an entire directory
+ifneq ($(CONFIG_NO_STRIP),)
+  RSTRIP:=:
+  STRIP:=:
+else
+  ifneq ($(CONFIG_USE_STRIP),)
+    STRIP:=$(TARGET_CROSS)strip $(call qstrip,$(CONFIG_STRIP_ARGS))
+  else
+    ifneq ($(CONFIG_USE_SSTRIP),)
+      STRIP:=$(STAGING_DIR_HOST)/bin/sstrip
+    endif
+  endif
+  RSTRIP:= \
+    export CROSS="$(TARGET_CROSS)" \
+        $(if $(CONFIG_KERNEL_KALLSYMS),NO_RENAME=1) \
+        $(if $(CONFIG_KERNEL_PROFILING),KEEP_SYMBOLS=1); \
+    NM="$(TARGET_CROSS)nm" \
+    STRIP="$(STRIP)" \
+    STRIP_KMOD="$(SCRIPT_DIR)/strip-kmod.sh" \
+    PATCHELF="$(STAGING_DIR_HOST)/bin/patchelf" \
+    $(SCRIPT_DIR)/rstrip.sh
+endif
+#+END_SRC
+
+where RSTRIP used?
+
+the call flow is:
+#+BEGIN_SRC make
+include $(INCLUDE_DIR)/package.mk
+  include $(INCLUDE_DIR)/package-ipkg.mk
+    $(RSTRIP) $$(IDIR_$(1))
+#+END_SRC
+
+* fix
+To disable the strip feature, add code below
+#+BEGIN_SRC make
+RSTRIP:=:
+#+END_SRC
+
+after
+#+BEGIN_SRC make
+include $(INCLUDE_DIR)/package.mk
+#+END_SRC
+in our package Makefile
+
