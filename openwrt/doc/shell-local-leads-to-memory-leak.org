@@ -1,0 +1,82 @@
+#+title: Shell `local' leads to memory leak
+#+options: ^:nil
+
+* description
+When I analysis a shell script in Openwrt which leads to memory leak.
+I found that the *local* command made it happen.
+
+shell version:
+#+BEGIN_SRC sh
+root@AP-1A:B0:~# /bin/sh --version
+
+BusyBox v1.23.2 (2017-06-09 06:54:32 CST) built-in shell (ash)
+#+END_SRC
+
+* test
+** test with *local*
+The test script as below:
+#+BEGIN_SRC sh
+#!/bin/sh
+
+while [ "1"="1" ]
+do
+    local len=1
+done
+#+END_SRC
+
+test steps:
+#+BEGIN_SRC sh
+root@AP-1A:B0:~# ./bb.sh &
+
+root@AP-1A:B0:~# ps | grep bb.sh
+29434 root     10428 R    {bb.sh} /bin/sh ./bb.sh
+29620 root      1348 S    grep bb.sh
+
+root@AP-1A:B0:~# ps | grep bb.sh
+29434 root     16660 R    {bb.sh} /bin/sh ./bb.sh
+29690 root      1348 S    grep bb.sh
+#+END_SRC
+
+As we can see, the VmSize increase rapidly.
+
+** test without local
+The test script as below:
+#+BEGIN_SRC sh
+#!/bin/sh
+
+while [ "1"="1" ]
+do
+    len=1
+done
+#+END_SRC
+
+test steps:
+#+BEGIN_SRC sh
+root@AP-1A:B0:~# ./bb.sh &
+root@AP-1A:B0:~# ps | grep bb.sh
+32170 root      1352 R    {bb.sh} /bin/sh ./bb.sh
+32204 root      1348 S    grep bb.sh
+root@AP-1A:B0:~# ps | grep bb.sh
+32170 root      1352 R    {bb.sh} /bin/sh ./bb.sh
+32233 root      1348 S    grep bb.sh
+#+END_SRC
+
+As we can see the VmSize stay the same.
+* reason
+I got the definiton from GNU bash handbook:
+#+BEGIN_SRC log
+local
+   local [option] name[=value] ...
+For each argument, a local variable named name is created, and assigned value.
+The option can be any of the options accepted by declare. *local can only*
+*be used within a function*; it makes the variable name have a visible scope
+restricted to that function and its children. The return status is zero unless
+local is used outside a function, an invalid name is supplied, or name is a
+readonly variable.
+#+END_SRC
+
+So the reason is that the undefined behavior of *local* used in *while* (not
+in a function) leads to memory leak issue.
+
+* fix
+remove the *local* command.
