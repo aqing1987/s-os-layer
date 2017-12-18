@@ -1,0 +1,57 @@
+#+title: Openwrt /tmp used 46% where is the files?
+#+options: ^:nil
+
+* reference
+https://serverfault.com/questions/488132/tmp-used-100-where-is-files
+
+* background
+The AP's cached memory cannot be dropped.
+
+And I noticed the /tmp occupation reached 47%, 28.3M has been used.
+#+BEGIN_SRC info
+root@xx:/tmp# df -h | grep \/tmp
+tmpfs                    60.4M     28.3M     32.2M  47% /tmp
+#+END_SRC
+
+But there is no big file larger than 1MB exist in /tmp, how could it be?
+
+* analysis
+
+** use `lsof' for analysis
+You should use
+#+BEGIN_SRC sh
+# lsof /tmp
+#+END_SRC
+to see currently opened file. If you delete a file, while a software still have a lock on it,
+you won't see it anymore, but it will still have hd space assigned to it.
+
+When you check the LSOF result, the `deleted' give you an idea of which file now only exist in
+memory. Stopping the relevant process should free the space.
+
+** do check
+#+BEGIN_SRC info
+root@xx:~# ./lsof /tmp/
+COMMAND     PID USER   FD   TYPE DEVICE SIZE/OFF     NODE NAME
+a_manage  1815 root    3u   REG   0,12   513310  4493690 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root    6u   REG   0,12   396153 12136888 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root    8u   REG   0,12    90211 12386852 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   10u   REG   0,12    90581 12658636 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   11u   REG   0,12    50707 12929050 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   12u   REG   0,12    19560 13077672 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   13u   REG   0,12    30767 13139143 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   14u   REG   0,12    19560 13228409 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   15u   REG   0,12    31146 13286211 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   16u   REG   0,12    19560 13377152 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   17u   REG   0,12    31147 13436140 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   18u   REG   0,12     9166 13531208 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   19u   REG   0,12    30254 13565102 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   20u   REG   0,12    10735 13667063 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   21u   REG   0,12    10869 13701469 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   22u   REG   0,12     9169 13736800 /tmp/log/a_manage.log (deleted)
+a_manage  1815 root   23u   REG   0,12    24591 13774431 /tmp/log/a_manage.log
+wxm       3949 root    3w   REG   0,12 23098781     4047 /tmp/log/wxm.log (deleted)
+#+END_SRC
+
+When I kill the a_manage, and wxm, I can drop the cached memory now.
+
+So, the logs operation of wxm and a_manage should be verified to fix this issue.

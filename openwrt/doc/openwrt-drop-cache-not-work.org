@@ -1,0 +1,106 @@
+#+title: Openwrt drop cache not work
+#+options: ^:nil
+
+* reference
++ https://unix.stackexchange.com/questions/87908/how-do-you-empty-the-buffers-and-cache-on-a-linux-system
++ https://askubuntu.com/questions/198549/what-is-cached-in-the-top-command
+
+* background
+I have a openwrt board with 128M ram, for safely upgrade, the free mem should
+kept at least 18MB.
+
+So, when I check the free mem is lower than 18MB, I will do the clean cache task:
+#+BEGIN_SRC c
+system("sync");
+sleep(1);
+system("echo 1 > /proc/sys/vm/drop_caches");
+system("echo 2 > /proc/sys/vm/drop_caches");
+system("echo 3 > /proc/sys/vm/drop_caches");
+sleep(1);
+#+END_SRC
+
+but it produce very little effect.
+
+The test result as below:
+#+BEGIN_SRC info
+root@xx:~# free; sync; echo 3 > /proc/sys/vm/drop_caches; free
+             total         used         free       shared      buffers
+Mem:        123776       107948        15828            0         1700
+-/+ buffers:             106248        17528
+Swap:            0            0            0
+             total         used         free       shared      buffers
+Mem:        123776       105540        18236            0          204
+-/+ buffers:             105336        18440
+Swap:            0            0            0
+#+END_SRC
+
+There are still 45588K mem cached, as below:
+#+BEGIN_SRC info
+Mem: 108076K used, 15700K free, 36264K shrd, 1780K buff, 45588K cached
+#+END_SRC
+* analysis
+** result
+the big files in /tmp (tmpfs) will not be removed by using
+#+BEGIN_SRC sh
+sync; echo 3 > /proc/sys/vm/drop_caches
+#+END_SRC
+
+But the size of big files in /tmp will added to the Cached memory value.
+
+** test steps
++ check cached mem
+  #+BEGIN_SRC info
+  root@xx:/tmp# top -bn1 | head -n1o
+  Mem: 106172K used, 17604K free, 26880K shrd, 5644K buff, 39000K cached
+  #+END_SRC
+
++ put big file to /tmp
+  #+BEGIN_SRC info
+  root@xx:/tmp# tftp -gr aa.bin  192.168.1.2
+  #+END_SRC
+
++ check cached mem again
+  #+BEGIN_SRC info
+  root@xx:/tmp# top -bn1 | head -n1
+  Mem: 120196K used, 3580K free, 40772K shrd, 5644K buff, 52968K cached
+  #+END_SRC
+
+Then we know the files in /tmp will increase the cached memory value.
+* base knowledge
+** tmpfs
+When I do command below
+#+BEGIN_SRC sh
+root@xx:/tmp# mount | grep /tmp
+tmpfs on /tmp type tmpfs (rw,nosuid,nodev,noatime)
+#+END_SRC
+
+I found that tmpfs mounted in /tmp direcoty.
+
+check details from
+https://www.kernel.org/doc/Documentation/filesystems/tmpfs.txt
+
+Tmpfs is a file system which keeps all files in virtual memory.
+
+Everything in tmpfs is temporary in the sense that no files will be created on
+your hard drive. If you unmount a tmpfs instance, everything stored therein is
+lost.
+
+tmpfs puts everything into the kernel internal caches and grows and shrinks to
+accommodate the files it contains and is able to swap unneeded pages out to swap
+space.
+
+size: The limit of allocated bytes for this tmpfs instance. The default is half
+of your physical RAM without swap. If you oversize your tmpfs instances the
+machine will deadlock since the OOM handler will not be able to free that memory.
+
+** `cached' in the top command
+when I do command below:
+#+BEGIN_SRC sh
+root@xx:/tmp# top -bn1 | head -n 1
+Mem: 117232K used, 6544K free, 40040K shrd, 4448K buff, 50924K cached
+#+END_SRC
+
+I got the 50924K memory info before `cached'.
+
+Cached memory is memory that Linux uses for disk caching.
+
