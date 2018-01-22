@@ -1,0 +1,200 @@
+#+title: Openwrt15.05 how to set environment variables for process
+#+options: ^:nil
+
+* reference
+https://wiki.openwrt.org/inbox/procd-init-scripts
+https://stackoverflow.com/questions/7669409/setenv-unsetenv-putenv
+
+* background
+I am porting Bluetopia app to Openwrt15.05, and I write the Bluetopia app's boot
+script according to Procd style.
+
+The Bluetopia libs used the system environment variable for setting bluetooth
+address. And the pointed system environment *BTHOST_BD_ADDR* should exist in the
+process space.
+
+I cannot find any desired system environment by using the following checking
+code:
+#+BEGIN_SRC c
+  extern char **environ;
+  char **env = environ;
+  while (*env) {
+    printf("%s\n", *env);
+    env++;
+  }
+#+END_SRC
+
+the result as below:
+#+BEGIN_QUOTE
+SHLVL=1
+HOME=/
+TERM=linux
+PWD=/
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+#+END_QUOTE
+
+Also you can check the environment variables for a running process by using
+#+BEGIN_SRC sh
+strings –a /proc/<pid_of_the_process>/environ
+#+END_SRC
+
+Even thouth, I used the *setenv()* api to set the pointed environment variable,
+but the variable cannot be set (showing 'null' from *getenv()*).
+* analysis
+Every process has its own copy of the environment variables. That they inherit
+from parent is just a convention. If you use execve you can set them to whatever
+you want. Manipulation of one process's copy never affects any other existing
+process, and in particular, nothing a child process does can change its parent's
+copy of the environment.
+
+So the environment variables below are belong to the *procd*.
+#+BEGIN_QUOTE
+SHLVL=1
+HOME=/
+TERM=linux
+PWD=/
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+#+END_QUOTE
+
+the App we created inherit the environment variables from *procd*.
+
+* fix steps
+change the boot script, pass the environment variables by using
+#+BEGIN_SRC sh
+procd_set_param env
+#+END_SRC
+
+sample as below:
+#+BEGIN_SRC sh
+procd_open_instance
+procd_set_param env BTHOST_BD_ADDR=${BTHOST_BD_ADDR}
+procd_set_param command "${APP}"
+procd_set_param respawn
+procd_close_instance
+#+END_SRC
+
+** analysis the env related code
+Analysis from the boot script:
+
++ /etc/init.d/bluetopia
+  #+BEGIN_SRC sh
+  start_service()
+    procd_open_instance
+    procd_close_instance
+  #+END_SRC
+
++ /etc/rc.common
+  #+BEGIN_SRC sh
+  rc_procd start_service "$@"
+    procd_open_service "$(basename ${basescript:-$initscript})" "$initscript"
+    procd_close_service
+  #+END_SRC
+
++ search "procd_open_service" in procd src directory
++ ipkg-ipq806x/procd/lib/functions/procd.sh
+  #+BEGIN_SRC sh
+  _procd_wrapper procd_open_service
+    _procd_call _procd_open_service
+      json_add_object instances
+  #+END_SRC
+
++ all arguments are packed into json and send over to procd via ubus
+  #+BEGIN_SRC sh
+  procd_close_service
+    _procd_close_service()
+      _procd_ubus_call set
+        ubus call service set "$(json_dump)"
+  #+END_SRC
+
++ procd/service/service.c
+  #+BEGIN_SRC c
+  UBUS_METHOD("set", service_handle_set, service_set_attrs),
+    service_handle_set()
+      service_alloc()
+        vlist_init(&s->instances, avl_strcmp, service_instance_update);
+      service_update()
+      service_event("service.start", s->name, NULL);
+        ubus_notify(ctx, &main_object, type, b.head, -1);
+  #+END_SRC
+  Then
+  #+BEGIN_SRC c
+  service_instance_update()
+    else if (in_n) {
+        DEBUG(2, "Create instance %s::%s\n", in_n->srv->name, in_n->name);
+        instance_start(in_n);
+    }
+  #+END_SRC
+
+
++ ubus/libubus-req.c
+  #+BEGIN_SRC c
+  ubus_notify()
+    __ubus_notify_async()
+      ubus_start_request()
+        ubus_send_msg()
+  #+END_SRC
+
++ ubus/libubus-io.c
+  #+BEGIN_SRC c
+  ubus_send_msg()
+    writev_retry()
+      cur_len = sendmsg(fd, &msghdr, 0);
+  #+END_SRC
+
++ procd/service/instance.c
+  #+BEGIN_SRC c
+  instance_start()
+    instance_run()
+      blobmsg_list_for_each(&in->env, var)
+        setenv(blobmsg_name(var->data), blobmsg_data(var->data), 1);
+      execvp(argv[0], argv);
+  #+END_SRC
+
+
+Add some debug logs:
+#+BEGIN_SRC c
+    blobmsg_list_for_each(&in->env, var)
+    {
+        setenv(blobmsg_name(var->data), blobmsg_data(var->data), 1);
+        char cmd[128];
+        sprintf(cmd, "echo [%s - %s] >> /tmp/xx1",
+                blobmsg_name(var->data), (char*)blobmsg_data(var->data));
+        system(cmd);
+    }
+
+#+END_SRC
+
+After the system booted up, I check the /tmp/xx1
+#+BEGIN_SRC sh
+root@xx:/tmp# cat xx1
+[BTHOST_BD_ADDR - 0x34AA0B7FA1CF]
+#+END_SRC
+
+So, It's been verified that we pass the environment virables by using
+*procd_set_param env*, and in the end procd use *setenv* and *execvp* start
+the APP, in which has the pointed environment virable we need.
+* error fix
+When I do the test, I encounter a issue that I cannot boot my process by using:
+#+BEGIN_SRC sh
+root@xx:# /etc/init.d/bluetopia start
+#+END_SRC
+
+The reason is that I add a '\' after the last line of the env. as below:
+#+BEGIN_SRC sh
+procd_open_instance
+procd_set_param command "${APP_SCANNER}"
+procd_set_param respawn
+procd_set_param env BTHOST_BD_ADDR=${BTHOST_BD_ADDR} \
+                BTHOST_XCAL_TRIM=${BTHOST_XCAL_TRIM} \
+procd_close_instance
+#+END_SRC
+
+To fix this issue, we need remove the last '\', the fixed code:
+#+BEGIN_SRC sh
+procd_open_instance
+procd_set_param command "${APP_SCANNER}"
+procd_set_param respawn
+procd_set_param env BTHOST_BD_ADDR=${BTHOST_BD_ADDR} \
+                BTHOST_XCAL_TRIM=${BTHOST_XCAL_TRIM}
+procd_close_instance
+#+END_SRC
